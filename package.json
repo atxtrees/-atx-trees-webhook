@@ -1,4 +1,4 @@
-json{
+{
   "name": "atx-trees-webhook",
   "version": "1.0.0",
   "main": "atx-trees-webhook-server.js",
