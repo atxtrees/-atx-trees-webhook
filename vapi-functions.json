@@ -1,0 +1,74 @@
+{
+  "functions": [
+    {
+      "name": "collect_caller_info",
+      "description": "Call this when you have collected the caller's name, phone number, and what service they're interested in.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "name":    { "type": "string", "description": "Caller's full name" },
+          "phone":   { "type": "string", "description": "Caller's phone number" },
+          "email":   { "type": "string", "description": "Caller's email address (optional)" },
+          "service": { "type": "string", "description": "Service they're interested in", "enum": ["Privacy Trees", "Shade Trees", "Native TX Trees", "Ornamental Trees", "Bulk Topsoil", "Delivery & Installation", "Warranty", "General Inquiry", "Other"] }
+        },
+        "required": ["name", "phone"]
+      }
+    },
+    {
+      "name": "schedule_callback",
+      "description": "Call this when the caller wants to schedule a follow-up call with the ATX Trees team.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "date":  { "type": "string", "description": "Preferred callback date (e.g. May 8, 2026)" },
+          "time":  { "type": "string", "description": "Preferred callback time (e.g. 10:00 AM)" },
+          "notes": { "type": "string", "description": "Any additional notes about what they need" }
+        },
+        "required": ["date", "time"]
+      }
+    },
+    {
+      "name": "book_consultation",
+      "description": "Call this when the caller wants to book a formal consultation or site visit.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "name":     { "type": "string" },
+          "phone":    { "type": "string" },
+          "email":    { "type": "string" },
+          "date":     { "type": "string", "description": "Consultation date" },
+          "time":     { "type": "string", "description": "Consultation time" },
+          "address":  { "type": "string", "description": "Property address" },
+          "services": { "type": "array", "items": { "type": "string" }, "description": "Services interested in" },
+          "budget":   { "type": "string", "description": "Estimated budget range" },
+          "notes":    { "type": "string", "description": "Project details or special notes" }
+        },
+        "required": ["name", "phone", "date", "time"]
+      }
+    },
+    {
+      "name": "send_sms_confirmation",
+      "description": "Call this at the end of every call to send the caller an SMS confirmation.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "phone":   { "type": "string", "description": "Phone number to send SMS to" },
+          "message": { "type": "string", "description": "Custom SMS message (optional — default will be used if omitted)" }
+        },
+        "required": ["phone"]
+      }
+    },
+    {
+      "name": "escalate_to_human",
+      "description": "Call this when a caller is upset, asks for a real person, or has an urgent situation that needs immediate human attention.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "reason": { "type": "string", "description": "Why escalation is needed" },
+          "urgency": { "type": "string", "enum": ["low", "medium", "high", "emergency"] }
+        },
+        "required": ["reason"]
+      }
+    }
+  ]
+}
