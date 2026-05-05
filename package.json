@@ -1,0 +1,15 @@
+json{
+  "name": "atx-trees-webhook",
+  "version": "1.0.0",
+  "main": "atx-trees-webhook-server.js",
+  "scripts": {
+    "start": "node atx-trees-webhook-server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "twilio": "^5.3.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
