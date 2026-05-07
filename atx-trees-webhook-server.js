@@ -3,6 +3,15 @@ const twilio  = require("twilio");
 const app     = express();
 app.use(express.json());
 
+// Allow dashboard to fetch data
+app.use(function(req, res, next) {
+  res.header("Access-Control-Allow-Origin", "*");
+  res.header("Access-Control-Allow-Headers", "Content-Type");
+  res.header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+  if (req.method === "OPTIONS") return res.sendStatus(200);
+  next();
+});
+
 const PORT        = process.env.PORT || 3000;
 const FROM_NUMBER = process.env.TWILIO_PHONE_NUMBER || "+15127495149";
 const OWNER_PHONE = process.env.OWNER_PHONE;
