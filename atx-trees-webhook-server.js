@@ -3,6 +3,78 @@ const twilio  = require("twilio");
 const app     = express();
 app.use(express.json());
 
+// ─── SUPABASE PERSISTENT STORAGE ───
+const SUPABASE_URL = "https://jypqdtbyaeaelqenmtzj.supabase.co";
+const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imp5cHFkdGJ5YWVhZWxxZW5tdHpqIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc4NjUyOTEwMSwiZXhwIjoyMTAyMTA1MTAxfQ.FGd8sAJGIkxCM7-1kTsZrI9C6HbbaQtZ1G29mLDMfP0";
+
+async function dbQuery(method, table, body, params) {
+  const fetch = require('node-fetch');
+  let url = SUPABASE_URL + '/rest/v1/' + table;
+  if (params) url += '?' + params;
+  const opts = {
+    method: method || 'GET',
+    headers: {
+      'apikey': SUPABASE_KEY,
+      'Authorization': 'Bearer ' + SUPABASE_KEY,
+      'Content-Type': 'application/json',
+      'Prefer': method === 'POST' ? 'return=representation' : 'return=minimal'
+    }
+  };
+  if (body) opts.body = JSON.stringify(body);
+  try {
+    const res = await fetch(url, opts);
+    if (res.status === 204) return [];
+    return await res.json();
+  } catch(e) {
+    console.error('DB error:', e.message);
+    return null;
+  }
+}
+
+async function saveToDB(table, data) {
+  return await dbQuery('POST', table, data, 'on_conflict=id');
+}
+
+async function updateDB(table, id, data) {
+  return await dbQuery('PATCH', table, data, 'id=eq.' + id);
+}
+
+async function loadFromDB(table, params) {
+  return await dbQuery('GET', table, null, params || 'order=created_at.desc&limit=200');
+}
+
+// Load all data from Supabase on startup
+async function loadAllData() {
+  console.log('Loading data from Supabase...');
+  try {
+    const [callsData, consultData] = await Promise.all([
+      loadFromDB('calls', 'order=started_at.desc&limit=200'),
+      loadFromDB('consultations', 'order=created_at.desc&limit=200')
+    ]);
+    if (callsData && Array.isArray(callsData)) {
+      liveCalls = callsData.map(c => ({
+        id: c.id, name: c.name || 'Unknown', phone: c.phone || '',
+        email: c.email || '', service: c.service || '', status: c.status || 'ended',
+        summary: c.summary || '', transcript: c.transcript || [],
+        voicemail: c.voicemail || '', sentiment: c.sentiment || '',
+        duration: c.duration || 0, startedAt: c.started_at,
+        smsReplied: c.sms_replied || false, escalated: c.escalated || false,
+        followUp: c.follow_up || '', urgent: c.urgent || false,
+        callType: c.call_type || ''
+      }));
+      console.log('Loaded', liveCalls.length, 'calls from Supabase');
+    }
+    if (consultData && Array.isArray(consultData)) {
+      liveConsultations = consultData;
+      console.log('Loaded', liveConsultations.length, 'consultations from Supabase');
+    }
+  } catch(e) {
+    console.error('Failed to load from Supabase:', e.message);
+  }
+}
+
+
+
 // Allow dashboard to fetch data
 app.use(function(req, res, next) {
   res.header("Access-Control-Allow-Origin", "*");
@@ -326,6 +398,8 @@ app.get("/health", function(_, res) {
   });
 });
 
+loadAllData().then(() => {
 app.listen(PORT, function() {
   console.log("ATX Trees Webhook running on port " + PORT);
-});
+})
+});;
