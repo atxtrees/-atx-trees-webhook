@@ -58,18 +58,8 @@ async function loadFromDB(table, params) {
 
 // Load all data from Supabase on startup
 async function loadAllData() {
-  const dns = require('dns');
-  const hostname = 'jypqdtbyaeaelqenmtzj.supabase.co';
   console.log('Loading data from Supabase...');
   console.log('SUPABASE_URL env:', process.env.SUPABASE_URL || 'not set');
-  console.log('Resolving hostname:', hostname);
-  dns.resolve4(hostname, function(err, addresses) {
-    if (err) {
-      console.error('DNS resolve failed:', err.message);
-    } else {
-      console.log('DNS resolved to:', addresses);
-    }
-  });
   try {
     const [callsData, consultData] = await Promise.all([
       loadFromDB('calls', 'order=started_at.desc&limit=200'),
@@ -455,6 +445,19 @@ app.post('/twilio/no-answer', function(req, res) {
   }
 });
 
+// Try Supabase with retries
+async function loadWithRetry(attempt) {
+  attempt = attempt || 1;
+  console.log('Supabase connection attempt', attempt);
+  await loadAllData();
+  if (liveCalls.length === 0 && attempt < 5) {
+    console.log('Retrying in 10 seconds...');
+    setTimeout(function() { loadWithRetry(attempt + 1); }, 10000);
+  }
+}
+
+loadWithRetry(1);
+// Also start server immediately without waiting
 loadAllData().then(() => {
 app.listen(PORT, function() {
   console.log("ATX Trees Webhook running on port " + PORT);
