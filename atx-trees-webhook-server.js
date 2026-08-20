@@ -398,6 +398,39 @@ app.get("/health", function(_, res) {
   });
 });
 
+
+// ─── RING ALBERT FIRST, THEN TERRA ───
+app.post('/twilio/ring-first', function(req, res) {
+  res.type('text/xml');
+  res.send(`<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Dial timeout="15" action="https://atx-trees-webhook-x8tf.onrender.com/twilio/no-answer" method="POST">
+    <Number>+17373284219</Number>
+  </Dial>
+</Response>`);
+});
+
+// ─── IF ALBERT DOESN'T ANSWER, SEND TO TERRA ───
+app.post('/twilio/no-answer', function(req, res) {
+  var dialStatus = req.body.DialCallStatus;
+  console.log('Dial status:', dialStatus);
+  // If Albert didn't answer, redirect to Vapi/Terra
+  if (dialStatus !== 'completed') {
+    res.type('text/xml');
+    res.send(`<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Redirect method="POST">https://api.vapi.ai/twilio/inbound_call</Redirect>
+</Response>`);
+  } else {
+    // Call was answered by Albert
+    res.type('text/xml');
+    res.send(`<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Hangup/>
+</Response>`);
+  }
+});
+
 loadAllData().then(() => {
 app.listen(PORT, function() {
   console.log("ATX Trees Webhook running on port " + PORT);
