@@ -58,7 +58,18 @@ async function loadFromDB(table, params) {
 
 // Load all data from Supabase on startup
 async function loadAllData() {
+  const dns = require('dns');
+  const hostname = 'jypqdtbyaeaelqenmtzj.supabase.co';
   console.log('Loading data from Supabase...');
+  console.log('SUPABASE_URL env:', process.env.SUPABASE_URL || 'not set');
+  console.log('Resolving hostname:', hostname);
+  dns.resolve4(hostname, function(err, addresses) {
+    if (err) {
+      console.error('DNS resolve failed:', err.message);
+    } else {
+      console.log('DNS resolved to:', addresses);
+    }
+  });
   try {
     const [callsData, consultData] = await Promise.all([
       loadFromDB('calls', 'order=started_at.desc&limit=200'),
