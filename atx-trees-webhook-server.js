@@ -4,8 +4,8 @@ const app     = express();
 app.use(express.json());
 
 // ─── SUPABASE PERSISTENT STORAGE ───
-const SUPABASE_URL = "https://jypqdtbyaeaelqenmtzj.supabase.co";
-const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imp5cHFkdGJ5YWVhZWxxZW5tdHpqIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc4NjUyOTEwMSwiZXhwIjoyMTAyMTA1MTAxfQ.FGd8sAJGIkxCM7-1kTsZrI9C6HbbaQtZ1G29mLDMfP0";
+const SUPABASE_URL = process.env.SUPABASE_URL || "https://jypqdtbyaeaelqenmtzj.supabase.co";
+const SUPABASE_KEY = process.env.SUPABASE_KEY || "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imp5cHFkdGJ5YWVhZWxxZW5tdHpqIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc4NjUyOTEwMSwiZXhwIjoyMTAyMTA1MTAxfQ.FGd8sAJGIkxCM7-1kTsZrI9C6HbbaQtZ1G29mLDMfP0";
 
 async function dbQuery(method, table, body, params) {
   return new Promise((resolve, reject) => {
@@ -20,7 +20,7 @@ async function dbQuery(method, table, body, params) {
     const bodyStr = body ? JSON.stringify(body) : null;
     if (bodyStr) headers['Content-Length'] = Buffer.byteLength(bodyStr);
     const options = {
-      hostname: 'jypqdtbyaeaelqenmtzj.supabase.co',
+      hostname: (process.env.SUPABASE_URL || 'https://jypqdtbyaeaelqenmtzj.supabase.co').replace('https://', '').replace('http://', ''),
       port: 443,
       path: path,
       method: method || 'GET',
