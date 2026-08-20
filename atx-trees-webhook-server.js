@@ -435,9 +435,9 @@ app.post('/twilio/no-answer', function(req, res) {
     res.type('text/xml');
     res.send('<?xml version="1.0" encoding="UTF-8"?><Response><Hangup/></Response>');
   } else {
-    // No answer, busy, failed - send to Terra
+    // No answer, busy, failed - send to Terra via Dial
     res.type('text/xml');
-    res.send('<?xml version="1.0" encoding="UTF-8"?><Response><Redirect method="POST">https://api.vapi.ai/twilio/inbound_call</Redirect></Response>');
+    res.send('<?xml version="1.0" encoding="UTF-8"?><Response><Dial><Sip>sip:' + (req.body.To || '').replace('+','') + '@sip.vapi.ai</Sip></Dial></Response>');
   }
 });
 
