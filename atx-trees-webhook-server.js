@@ -8,27 +8,40 @@ const SUPABASE_URL = "https://jypqdtbyaeaelqenmtzj.supabase.co";
 const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imp5cHFkdGJ5YWVhZWxxZW5tdHpqIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc4NjUyOTEwMSwiZXhwIjoyMTAyMTA1MTAxfQ.FGd8sAJGIkxCM7-1kTsZrI9C6HbbaQtZ1G29mLDMfP0";
 
 async function dbQuery(method, table, body, params) {
-  const fetch = require('node-fetch');
-  let url = SUPABASE_URL + '/rest/v1/' + table;
-  if (params) url += '?' + params;
-  const opts = {
-    method: method || 'GET',
-    headers: {
+  return new Promise((resolve, reject) => {
+    let path = '/rest/v1/' + table;
+    if (params) path += '?' + params;
+    const headers = {
       'apikey': SUPABASE_KEY,
       'Authorization': 'Bearer ' + SUPABASE_KEY,
       'Content-Type': 'application/json',
       'Prefer': method === 'POST' ? 'return=representation' : 'return=minimal'
-    }
-  };
-  if (body) opts.body = JSON.stringify(body);
-  try {
-    const res = await fetch(url, opts);
-    if (res.status === 204) return [];
-    return await res.json();
-  } catch(e) {
-    console.error('DB error:', e.message);
-    return null;
-  }
+    };
+    const bodyStr = body ? JSON.stringify(body) : null;
+    if (bodyStr) headers['Content-Length'] = Buffer.byteLength(bodyStr);
+    const options = {
+      hostname: 'jypqdtbyaeaelqenmtzj.supabase.co',
+      port: 443,
+      path: path,
+      method: method || 'GET',
+      headers: headers
+    };
+    const req = require('https').request(options, (res) => {
+      let data = '';
+      res.on('data', chunk => data += chunk);
+      res.on('end', () => {
+        if (res.statusCode === 204) return resolve([]);
+        try { resolve(JSON.parse(data)); }
+        catch(e) { resolve([]); }
+      });
+    });
+    req.on('error', (e) => {
+      console.error('DB error:', e.message);
+      resolve(null);
+    });
+    if (bodyStr) req.write(bodyStr);
+    req.end();
+  });
 }
 
 async function saveToDB(table, data) {
