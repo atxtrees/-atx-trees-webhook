@@ -428,20 +428,16 @@ app.post('/twilio/ring-first', function(req, res) {
 app.post('/twilio/no-answer', function(req, res) {
   var dialStatus = req.body.DialCallStatus;
   console.log('Dial status:', dialStatus);
-  // If Albert didn't answer, redirect to Vapi/Terra
-  if (dialStatus !== 'completed') {
+  console.log('Body:', JSON.stringify(req.body));
+  // Always send to Terra unless Albert answered
+  if (dialStatus === 'completed') {
+    // Albert answered and call ended normally
     res.type('text/xml');
-    res.send(`<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-  <Redirect method="POST">https://api.vapi.ai/twilio/inbound_call</Redirect>
-</Response>`);
+    res.send('<?xml version="1.0" encoding="UTF-8"?><Response><Hangup/></Response>');
   } else {
-    // Call was answered by Albert
+    // No answer, busy, failed - send to Terra
     res.type('text/xml');
-    res.send(`<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-  <Hangup/>
-</Response>`);
+    res.send('<?xml version="1.0" encoding="UTF-8"?><Response><Redirect method="POST">https://api.vapi.ai/twilio/inbound_call</Redirect></Response>');
   }
 });
 
