@@ -56,14 +56,55 @@ async function loadFromDB(table, params) {
   return await dbQuery('GET', table, null, params || 'order=created_at.desc&limit=200');
 }
 
+
+// ─── BOOKINGS API ───
+app.get('/api/bookings', async function(req, res) {
+  try {
+    var result = await dbQuery('GET', 'bookings', null, 'order=created_at.desc&limit=500');
+    res.json(result || []);
+  } catch(e) {
+    res.json([]);
+  }
+});
+
+app.post('/api/bookings', async function(req, res) {
+  try {
+    var b = req.body;
+    var result = await dbQuery('POST', 'bookings', {
+      name: b.name,
+      phone: b.phone,
+      email: b.email,
+      address: b.address,
+      date: b.date,
+      time: b.time,
+      type: b.type,
+      service: b.service,
+      notes: b.notes
+    }, null);
+    res.json(result || {success: true});
+  } catch(e) {
+    res.status(500).json({error: e.message});
+  }
+});
+
+app.delete('/api/bookings/:id', async function(req, res) {
+  try {
+    await dbQuery('DELETE', 'bookings', null, 'id=eq.'+req.params.id);
+    res.json({success: true});
+  } catch(e) {
+    res.status(500).json({error: e.message});
+  }
+});
+
 // Load all data from Supabase on startup
 async function loadAllData() {
   console.log('Loading data from Supabase...');
   console.log('SUPABASE_URL env:', process.env.SUPABASE_URL || 'not set');
   try {
-    const [callsData, consultData] = await Promise.all([
+    const [callsData, consultData, bookingsData] = await Promise.all([
       loadFromDB('calls', 'order=started_at.desc&limit=200'),
-      loadFromDB('consultations', 'order=created_at.desc&limit=200')
+      loadFromDB('consultations', 'order=created_at.desc&limit=200'),
+      loadFromDB('bookings', 'order=created_at.desc&limit=500')
     ]);
     if (callsData && Array.isArray(callsData)) {
       liveCalls = callsData.map(c => ({
@@ -81,6 +122,10 @@ async function loadAllData() {
     if (consultData && Array.isArray(consultData)) {
       liveConsultations = consultData;
       console.log('Loaded', liveConsultations.length, 'consultations from Supabase');
+    }
+    if (bookingsData && Array.isArray(bookingsData)) {
+      liveBookings = bookingsData;
+      console.log('Loaded', liveBookings.length, 'bookings from Supabase');
     }
   } catch(e) {
     console.error('Failed to load from Supabase:', e.message);
