@@ -419,6 +419,51 @@ app.get("/health", function(_, res) {
 });
 
 
+// ─── BOOKINGS API ───
+app.get('/api/bookings', async function(req, res) {
+  try {
+    var result = await dbQuery('GET', 'bookings', null, 'order=created_at.desc&limit=500');
+    res.json(result || []);
+  } catch(e) {
+    console.error('GET bookings error:', e.message);
+    res.json([]);
+  }
+});
+
+app.post('/api/bookings', async function(req, res) {
+  try {
+    var b = req.body;
+    console.log('[Booking] Saving:', b.name, b.date);
+    var result = await dbQuery('POST', 'bookings', {
+      name: b.name || '',
+      phone: b.phone || '',
+      email: b.email || '',
+      address: b.address || '',
+      date: b.date || '',
+      time: b.time || '',
+      type: b.type || '',
+      service: b.service || '',
+      notes: b.notes || ''
+    }, 'Prefer=return%3Drepresentation');
+    console.log('[Booking] Saved!');
+    res.json(result || [{success: true}]);
+  } catch(e) {
+    console.error('[Booking] Error:', e.message);
+    res.status(500).json({error: e.message});
+  }
+});
+
+app.delete('/api/bookings/:id', async function(req, res) {
+  try {
+    await dbQuery('DELETE', 'bookings', null, 'id=eq.'+req.params.id);
+    res.json({success: true});
+  } catch(e) {
+    res.status(500).json({error: e.message});
+  }
+});
+
+
+
 // ─── RING ALBERT FIRST, THEN TERRA ───
 app.post('/twilio/ring-first', function(req, res) {
   res.type('text/xml');
