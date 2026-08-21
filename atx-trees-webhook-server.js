@@ -445,7 +445,11 @@ app.post('/api/bookings', async function(req, res) {
       service: b.service || '',
       notes: b.notes || ''
     }, 'Prefer=return%3Drepresentation');
-    console.log('[Booking] Saved!');
+    console.log('[Booking] DB result:', JSON.stringify(result));
+    if(result && result.code) {
+      console.error('[Booking] Supabase error:', result.message, result.hint);
+      return res.status(500).json({error: result.message});
+    }
     res.json(result || [{success: true}]);
   } catch(e) {
     console.error('[Booking] Error:', e.message);
