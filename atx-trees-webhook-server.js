@@ -113,11 +113,11 @@ const twilioClient = twilio(
   process.env.TWILIO_AUTH_TOKEN
 );
 
-async function sendSMS(to, body) {
+async async function sendSMS(to, body) {
   try {
     const digits = to.replace(/\D/g, "");
     const e164   = digits.length === 10 ? "+1" + digits : "+" + digits;
-    const msg    = await twilioClient.messages.create({ to: e164, from: FROM_NUMBER, body });
+    const msg    = await twilioClient.messages.create({ to: e164, messagingServiceSid: 'MG220d251c4bdd707915823faa8cc75176', body });
     console.log("[SMS OK] -> " + e164 + " | SID: " + msg.sid);
     return { success: true, sid: msg.sid };
   } catch (err) {
