@@ -70,19 +70,22 @@ app.get('/api/bookings', async function(req, res) {
 app.post('/api/bookings', async function(req, res) {
   try {
     var b = req.body;
+    console.log('[Booking] Saving:', b.name, b.date);
     var result = await dbQuery('POST', 'bookings', {
-      name: b.name,
-      phone: b.phone,
-      email: b.email,
-      address: b.address,
-      date: b.date,
-      time: b.time,
-      type: b.type,
-      service: b.service,
-      notes: b.notes
-    }, null);
-    res.json(result || {success: true});
+      name: b.name || '',
+      phone: b.phone || '',
+      email: b.email || '',
+      address: b.address || '',
+      date: b.date || '',
+      time: b.time || '',
+      type: b.type || '',
+      service: b.service || '',
+      notes: b.notes || ''
+    }, 'Prefer=return%3Drepresentation');
+    console.log('[Booking] Result:', JSON.stringify(result));
+    res.json(result || [{success: true}]);
   } catch(e) {
+    console.error('[Booking] Error:', e.message);
     res.status(500).json({error: e.message});
   }
 });
