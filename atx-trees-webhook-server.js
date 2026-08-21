@@ -15,7 +15,7 @@ async function dbQuery(method, table, body, params) {
       'apikey': SUPABASE_KEY,
       'Authorization': 'Bearer ' + SUPABASE_KEY,
       'Content-Type': 'application/json',
-      'Prefer': method === 'POST' ? 'return=representation' : 'return=minimal'
+      'Prefer': 'return=representation'
     };
     const bodyStr = body ? JSON.stringify(body) : null;
     if (bodyStr) headers['Content-Length'] = Buffer.byteLength(bodyStr);
@@ -444,7 +444,7 @@ app.post('/api/bookings', async function(req, res) {
       type: b.type || '',
       service: b.service || '',
       notes: b.notes || ''
-    }, 'Prefer=return%3Drepresentation');
+    }, null);
     console.log('[Booking] DB result:', JSON.stringify(result));
     if(result && result.code) {
       console.error('[Booking] Supabase error:', result.message, result.hint);
