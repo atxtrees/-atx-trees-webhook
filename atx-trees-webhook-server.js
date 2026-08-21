@@ -287,7 +287,7 @@ async function handleEndOfCall(payload, res) {
   }
 
   if (!call.smsReplied && call.phone !== "Unknown") {
-    var body = "Hi" + first(call.name) + "! You called ATX Trees (512) 749-5149. Sorry we missed you! Reply here to get a free estimate or schedule a visit. We'll be in touch soon!";
+    var body = "Hi" + first(call.name) + "! Thanks for calling ATX Trees! Sorry we missed you. One of our team members will call you back shortly. In the meantime visit atxtrees.com to learn more about our Trees and Tree Care Program. - ATX Trees";
     var r = await sendSMS(call.phone, body);
     if (r.success) { call.smsReplied = true; logSMS(call.phone, body, "missed-call", r.sid); }
   }
