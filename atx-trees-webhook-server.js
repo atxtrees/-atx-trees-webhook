@@ -512,5 +512,5 @@ loadWithRetry(1);
 loadAllData().then(() => {
 app.listen(PORT, function() {
   console.log("ATX Trees Webhook running on port " + PORT);
-})
-});;
+});
+});
