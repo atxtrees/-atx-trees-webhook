@@ -113,7 +113,7 @@ const twilioClient = twilio(
   process.env.TWILIO_AUTH_TOKEN
 );
 
-async async function sendSMS(to, body) {
+async function sendSMS(to, body) {
   try {
     const digits = to.replace(/\D/g, "");
     const e164   = digits.length === 10 ? "+1" + digits : "+" + digits;
