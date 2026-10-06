@@ -293,6 +293,7 @@ async function handleEndOfCall(payload, res) {
   }
 
   sendEmailNotification(call);
+  scoreLead(call);
   console.log("[End of Call] " + call.phone + " | " + dur + "s | " + call.sentiment);
   res.status(200).json({ received: true });
 }
@@ -425,6 +426,61 @@ async function sendEmailNotification(call) {
     var er=https.request({hostname:'api.sendgrid.com',port:443,path:'/v3/mail/send',method:'POST',headers:{'Authorization':'Bearer '+SENDGRID_KEY,'Content-Type':'application/json','Content-Length':Buffer.byteLength(p)}},function(r){console.log('[Email] '+r.statusCode);});
     er.on('error',function(e){console.error('[Email]',e.message);});er.write(p);er.end();
   }catch(e){console.error('[Email]',e.message);}
+}
+
+
+// ─── LEAD SCORER (Claude AI) ───
+async function scoreLead(call) {
+  try {
+    if (!call.transcript || call.transcript.length === 0) return;
+    
+    var transcriptText = call.transcript.map(function(m) {
+      var role = (m.role === 'assistant' || m.role === 'bot') ? 'Terra' : 'Customer';
+      return role + ': ' + m.content;
+    }).join('\n');
+
+    var prompt = 'You are analyzing a call transcript for ATX Trees, a tree nursery and care company in Dripping Springs, TX. Score this lead based on buying intent.\n\nTranscript:\n' + transcriptText + '\n\nRespond with ONLY a JSON object like this:\n{"score": "hot", "reason": "Customer asked about pricing and delivery timeline", "callType": "new_trees"}\n\nScore must be one of: hot, warm, cold\n- hot: ready to buy, asking about price/delivery/scheduling, urgent warranty issue\n- warm: interested but researching, wants callback, asked about TCP program\n- cold: just browsing, wrong number, no clear intent\n\ncallType must be one of: new_trees, tree_care, warranty, other';
+
+    var response = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': process.env.ANTHROPIC_API_KEY || '',
+        'anthropic-version': '2023-06-01'
+      },
+      body: JSON.stringify({
+        model: 'claude-haiku-4-5',
+        max_tokens: 200,
+        messages: [{ role: 'user', content: prompt }]
+      })
+    });
+
+    var data = await response.json();
+    var text = data.content && data.content[0] && data.content[0].text;
+    if (!text) return;
+
+    var result = JSON.parse(text.trim());
+    call.leadScore = result.score;
+    call.callType = result.callType;
+    
+    console.log('[Lead Score] ' + call.name + ': ' + result.score + ' - ' + result.reason);
+
+    // If HOT lead — send immediate SMS to Albert
+    if (result.score === 'hot') {
+      var alertMsg = '🔥 HOT LEAD - ' + (call.name || 'Unknown') + ' (' + (call.phone || '') + ') is ready to buy! Call back NOW. Reason: ' + result.reason;
+      await sendSMS(process.env.OWNER_PHONE || '+15127495149', alertMsg);
+      console.log('[Hot Lead Alert] Sent to Albert!');
+    }
+
+    // Update in Supabase
+    await updateDB('calls', call.id, { 
+      call_type: result.callType,
+      lead_score: result.score 
+    });
+
+  } catch(e) {
+    console.error('[Lead Scorer Error]', e.message);
+  }
 }
 
 app.get("/health", function(_, res) {
