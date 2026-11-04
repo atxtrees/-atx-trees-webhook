@@ -13,6 +13,63 @@ app.use(function(req, res, next) {
 });
 
 const PORT         = process.env.PORT || 3000;
+const SENDGRID_KEY = process.env.SENDGRID_KEY || '';
+const GROK_EMAIL   = 'atxtrees@outlook.com';
+
+// ── EMAIL TO GROK (Outlook) ──
+function emailGrok(call) {
+  if (!SENDGRID_KEY) { console.log('[Email] No SendGrid key'); return; }
+  const urgent = call.lead_score === 'urgent';
+  const subject = `${urgent ? '🚨 URGENT - ' : ''}Terra Call: ${call.name || 'Unknown'} | ${call.phone || 'No phone'} | ${call.call_type || 'general'}`;
+
+  const transcriptHtml = (call.transcript || []).map(m => {
+    const who = (m.role === 'assistant') ? 'Terra' : 'Caller';
+    return `<tr><td style="padding:4px 8px;color:${who==='Terra'?'#2d5a2d':'#1a1a6e'};font-weight:600;white-space:nowrap">${who}</td><td style="padding:4px 8px">${m.content||''}</td></tr>`;
+  }).join('');
+
+  const html = `
+<div style="font-family:sans-serif;max-width:600px;margin:0 auto;padding:20px">
+  <div style="background:#1e3a1e;padding:16px 20px;border-radius:10px 10px 0 0">
+    <h2 style="color:#d4a855;margin:0;font-size:20px">🌳 ATX Trees — Terra Call Report</h2>
+  </div>
+  <div style="background:#f9f9f9;padding:16px 20px;border:1px solid #ddd">
+    ${urgent ? '<div style="background:#fdf0ef;border:2px solid #c0392b;border-radius:8px;padding:10px;margin-bottom:14px;color:#c0392b;font-weight:bold">🚨 URGENT — Warranty or upset caller. Follow up immediately.</div>' : ''}
+    <table style="width:100%;border-collapse:collapse;margin-bottom:16px">
+      <tr><td style="padding:6px 0;color:#666;width:130px">Name</td><td style="padding:6px 0"><strong>${call.name || 'Unknown'}</strong></td></tr>
+      <tr><td style="padding:6px 0;color:#666">Phone</td><td style="padding:6px 0"><strong>${call.phone || 'Not captured'}</strong></td></tr>
+      <tr><td style="padding:6px 0;color:#666">Call Type</td><td style="padding:6px 0">${call.call_type || 'General'}</td></tr>
+      <tr><td style="padding:6px 0;color:#666">Lead Score</td><td style="padding:6px 0">${call.lead_score || 'warm'}</td></tr>
+      <tr><td style="padding:6px 0;color:#666">Duration</td><td style="padding:6px 0">${call.duration || 0}s</td></tr>
+      <tr><td style="padding:6px 0;color:#666">Time</td><td style="padding:6px 0">${new Date().toLocaleString('en-US', {timeZone:'America/Chicago'})}</td></tr>
+    </table>
+    ${call.summary ? `<div style="background:#fff;border:1px solid #ddd;border-radius:8px;padding:12px;margin-bottom:16px"><strong>Summary:</strong><br>${call.summary}</div>` : ''}
+    ${transcriptHtml ? `<div style="background:#fff;border:1px solid #ddd;border-radius:8px;padding:12px"><strong>Transcript:</strong><br><table style="width:100%">${transcriptHtml}</table></div>` : ''}
+  </div>
+  <div style="background:#1e3a1e;padding:10px 20px;border-radius:0 0 10px 10px;text-align:center">
+    <span style="color:rgba(255,255,255,0.5);font-size:12px">ATX Trees · Terra AI · atxtrees.com</span>
+  </div>
+</div>`;
+
+  const payload = JSON.stringify({
+    personalizations: [{ to: [{ email: GROK_EMAIL }] }],
+    from: { email: 'albert@atxtrees.com', name: 'Terra - ATX Trees' },
+    subject,
+    content: [{ type: 'text/html', value: html }]
+  });
+
+  const req = https.request({
+    hostname: 'api.sendgrid.com', port: 443,
+    path: '/v3/mail/send', method: 'POST',
+    headers: {
+      'Authorization': 'Bearer ' + SENDGRID_KEY,
+      'Content-Type': 'application/json',
+      'Content-Length': Buffer.byteLength(payload)
+    }
+  }, (res) => { console.log(`[Email → Grok] ${res.statusCode}`); });
+  req.on('error', e => console.error('[Email Error]', e.message));
+  req.write(payload);
+  req.end();
+}
 const SUPABASE_URL = process.env.SUPABASE_URL || "https://jypqdtbyaeaelqenmtzj.supabase.co";
 const SUPABASE_KEY = process.env.SUPABASE_KEY || "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imp5cHFkdGJ5YWVhZWxxZW5tdHpqIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc4NjUyOTEwMSwiZXhwIjoyMTAyMTA1MTAxfQ.FGd8sAJGIkxCM7-1kTsZrI9C6HbbaQtZ1G29mLDMfP0";
 
@@ -240,6 +297,18 @@ app.post("/vapi/webhook", async function(req, res) {
       });
 
       console.log(`[End of Call] ${call.phone} | ${duration}s | type:${callType} | score:${leadScore}`);
+
+      // ── EMAIL GROK ──
+      emailGrok({
+        name:       name,
+        phone:      call.phone || formatPhone(payload?.call?.customer?.number || ''),
+        call_type:  callType,
+        lead_score: leadScore,
+        summary:    summary,
+        transcript: transcript,
+        duration:   duration
+      });
+
       delete activeCalls[callId];
 
       res.status(200).json({ received: true });
