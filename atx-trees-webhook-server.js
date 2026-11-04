@@ -1,550 +1,259 @@
 const express = require("express");
-const twilio  = require("twilio");
+const https   = require("https");
 const app     = express();
 app.use(express.json());
 
-// ─── SUPABASE PERSISTENT STORAGE ───
-const SUPABASE_URL = process.env.SUPABASE_URL || "https://jypqdtbyaeaelqenmtzj.supabase.co";
-const SUPABASE_KEY = process.env.SUPABASE_KEY || "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imp5cHFkdGJ5YWVhZWxxZW5tdHpqIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc4NjUyOTEwMSwiZXhwIjoyMTAyMTA1MTAxfQ.FGd8sAJGIkxCM7-1kTsZrI9C6HbbaQtZ1G29mLDMfP0";
-
-async function dbQuery(method, table, body, params) {
-  return new Promise((resolve, reject) => {
-    let path = '/rest/v1/' + table;
-    if (params) path += '?' + params;
-    const headers = {
-      'apikey': SUPABASE_KEY,
-      'Authorization': 'Bearer ' + SUPABASE_KEY,
-      'Content-Type': 'application/json',
-      'Prefer': 'return=representation'
-    };
-    const bodyStr = body ? JSON.stringify(body) : null;
-    if (bodyStr) headers['Content-Length'] = Buffer.byteLength(bodyStr);
-    const options = {
-      hostname: (process.env.SUPABASE_URL || 'https://jypqdtbyaeaelqenmtzj.supabase.co').replace('https://', '').replace('http://', ''),
-      port: 443,
-      path: path,
-      method: method || 'GET',
-      headers: headers
-    };
-    const req = require('https').request(options, (res) => {
-      let data = '';
-      res.on('data', chunk => data += chunk);
-      res.on('end', () => {
-        if (res.statusCode === 204) return resolve([]);
-        try { resolve(JSON.parse(data)); }
-        catch(e) { resolve([]); }
-      });
-    });
-    req.on('error', (e) => {
-      console.error('DB error:', e.message);
-      resolve(null);
-    });
-    if (bodyStr) req.write(bodyStr);
-    req.end();
-  });
-}
-
-async function saveToDB(table, data) {
-  return await dbQuery('POST', table, data, 'on_conflict=id');
-}
-
-async function updateDB(table, id, data) {
-  return await dbQuery('PATCH', table, data, 'id=eq.' + id);
-}
-
-async function loadFromDB(table, params) {
-  return await dbQuery('GET', table, null, params || 'order=created_at.desc&limit=200');
-}
-
-
-// Load all data from Supabase on startup
-async function loadAllData() {
-  console.log('Loading data from Supabase...');
-  console.log('SUPABASE_URL env:', process.env.SUPABASE_URL || 'not set');
-  try {
-    const [callsData, consultData, bookingsData] = await Promise.all([
-      loadFromDB('calls', 'order=started_at.desc&limit=200'),
-      loadFromDB('consultations', 'order=created_at.desc&limit=200'),
-      loadFromDB('bookings', 'order=created_at.desc&limit=500')
-    ]);
-    if (callsData && Array.isArray(callsData)) {
-      liveCalls = callsData.map(c => ({
-        id: c.id, name: c.name || 'Unknown', phone: c.phone || '',
-        email: c.email || '', service: c.service || '', status: c.status || 'ended',
-        summary: c.summary || '', transcript: c.transcript || [],
-        voicemail: c.voicemail || '', sentiment: c.sentiment || '',
-        duration: c.duration || 0, startedAt: c.started_at,
-        smsReplied: c.sms_replied || false, escalated: c.escalated || false,
-        followUp: c.follow_up || '', urgent: c.urgent || false,
-        callType: c.call_type || ''
-      }));
-      console.log('Loaded', liveCalls.length, 'calls from Supabase');
-    }
-    if (consultData && Array.isArray(consultData)) {
-      liveConsultations = consultData;
-      console.log('Loaded', liveConsultations.length, 'consultations from Supabase');
-    }
-    if (bookingsData && Array.isArray(bookingsData)) {
-      liveBookings = bookingsData;
-      console.log('Loaded', liveBookings.length, 'bookings from Supabase');
-    }
-  } catch(e) {
-    console.error('Failed to load from Supabase:', e.message);
-  }
-}
-
-
-
-// Allow dashboard to fetch data
+// ── CORS ──
 app.use(function(req, res, next) {
   res.header("Access-Control-Allow-Origin", "*");
   res.header("Access-Control-Allow-Headers", "Content-Type");
-  res.header("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS");
+  res.header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
   if (req.method === "OPTIONS") return res.sendStatus(200);
   next();
 });
 
-const PORT        = process.env.PORT || 3000;
-const FROM_NUMBER = process.env.TWILIO_PHONE_NUMBER || "+15127495149";
-const OWNER_PHONE = process.env.OWNER_PHONE;
+const PORT         = process.env.PORT || 3000;
+const SUPABASE_URL = process.env.SUPABASE_URL || "https://jypqdtbyaeaelqenmtzj.supabase.co";
+const SUPABASE_KEY = process.env.SUPABASE_KEY || "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imp5cHFkdGJ5YWVhZWxxZW5tdHpqIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc4NjUyOTEwMSwiZXhwIjoyMTAyMTA1MTAxfQ.FGd8sAJGIkxCM7-1kTsZrI9C6HbbaQtZ1G29mLDMfP0";
 
-const twilioClient = twilio(
-  process.env.TWILIO_ACCOUNT_SID,
-  process.env.TWILIO_AUTH_TOKEN
-);
-
-async function sendSMS(to, body) {
-  try {
-    const digits = to.replace(/\D/g, "");
-    const e164   = digits.length === 10 ? "+1" + digits : "+" + digits;
-    const msg    = await twilioClient.messages.create({ to: e164, messagingServiceSid: 'MG220d251c4bdd707915823faa8cc75176', body });
-    console.log("[SMS OK] -> " + e164 + " | SID: " + msg.sid);
-    return { success: true, sid: msg.sid };
-  } catch (err) {
-    console.error("[SMS ERR] -> " + to + ": " + err.message);
-    return { success: false, error: err.message };
-  }
+// ── SUPABASE HELPER ──
+function dbWrite(table, data, params) {
+  return new Promise((resolve) => {
+    const body = JSON.stringify(data);
+    const path = `/rest/v1/${table}${params ? '?' + params : ''}`;
+    const options = {
+      hostname: SUPABASE_URL.replace('https://', ''),
+      port: 443,
+      path,
+      method: 'POST',
+      headers: {
+        'apikey': SUPABASE_KEY,
+        'Authorization': 'Bearer ' + SUPABASE_KEY,
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(body),
+        'Prefer': 'return=minimal'
+      }
+    };
+    const req = https.request(options, (res) => {
+      let d = '';
+      res.on('data', c => d += c);
+      res.on('end', () => {
+        console.log(`[DB] ${table} write → ${res.statusCode}`);
+        resolve(res.statusCode);
+      });
+    });
+    req.on('error', (e) => { console.error('[DB Error]', e.message); resolve(null); });
+    req.write(body);
+    req.end();
+  });
 }
 
-async function alertOwner(message) {
-  if (!OWNER_PHONE) { console.warn("[Alert] OWNER_PHONE not set."); return; }
-  await sendSMS(OWNER_PHONE, "ATX Trees Alert:\n" + message);
+function dbPatch(table, id, data) {
+  return new Promise((resolve) => {
+    const body = JSON.stringify(data);
+    const options = {
+      hostname: SUPABASE_URL.replace('https://', ''),
+      port: 443,
+      path: `/rest/v1/${table}?id=eq.${id}`,
+      method: 'PATCH',
+      headers: {
+        'apikey': SUPABASE_KEY,
+        'Authorization': 'Bearer ' + SUPABASE_KEY,
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(body),
+        'Prefer': 'return=minimal'
+      }
+    };
+    const req = https.request(options, (res) => {
+      let d = '';
+      res.on('data', c => d += c);
+      res.on('end', () => resolve(res.statusCode));
+    });
+    req.on('error', (e) => { console.error('[DB Patch Error]', e.message); resolve(null); });
+    req.write(body);
+    req.end();
+  });
 }
 
-var store = { calls: [], consultations: [], followUps: [], smsLog: [] };
-
-function logSMS(to, body, type, sid) {
-  store.smsLog.push({ to: to, body: body, type: type, sid: sid, sentAt: new Date().toISOString() });
+function dbGet(table, params) {
+  return new Promise((resolve) => {
+    const options = {
+      hostname: SUPABASE_URL.replace('https://', ''),
+      port: 443,
+      path: `/rest/v1/${table}?${params || 'order=created_at.desc&limit=200'}`,
+      method: 'GET',
+      headers: {
+        'apikey': SUPABASE_KEY,
+        'Authorization': 'Bearer ' + SUPABASE_KEY,
+        'Content-Type': 'application/json'
+      }
+    };
+    const req = https.request(options, (res) => {
+      let d = '';
+      res.on('data', c => d += c);
+      res.on('end', () => {
+        try { resolve(JSON.parse(d)); }
+        catch(e) { resolve([]); }
+      });
+    });
+    req.on('error', () => resolve([]));
+    req.end();
+  });
 }
 
 function formatPhone(raw) {
-  if (!raw) return "Unknown";
-  var d = raw.replace(/\D/g, "");
-  if (d.length === 11 && d[0] === "1") return "(" + d.slice(1,4) + ") " + d.slice(4,7) + "-" + d.slice(7);
-  if (d.length === 10) return "(" + d.slice(0,3) + ") " + d.slice(3,6) + "-" + d.slice(6);
+  if (!raw) return '';
+  const d = raw.replace(/\D/g, '');
+  if (d.length === 11 && d[0] === '1') return `(${d.slice(1,4)}) ${d.slice(4,7)}-${d.slice(7)}`;
+  if (d.length === 10) return `(${d.slice(0,3)}) ${d.slice(3,6)}-${d.slice(6)}`;
   return raw;
 }
 
-function first(name) {
-  if (!name || name === "Unknown") return "";
-  return " " + name.split(" ")[0];
-}
+// ── IN-MEMORY CALL BUFFER (for active calls) ──
+const activeCalls = {};
 
-// ============================================================
-//  VAPI WEBHOOK
-// ============================================================
+// ── VAPI WEBHOOK ──
 app.post("/vapi/webhook", async function(req, res) {
-  var body    = req.body;
-  var type    = (body && body.message && body.message.type) || body.type || "";
-  var payload = (body && body.message) || body;
+  const body    = req.body;
+  const type    = (body?.message?.type) || body?.type || '';
+  const payload = body?.message || body;
 
-  console.log("[Vapi] " + type);
+  console.log(`[Vapi] ${type}`);
 
   try {
-    if (type === "assistant.started" || type === "call-start" || type === "call.started") {
-      handleCallStart(payload);
+    // ── CALL START ──
+    if (type === 'call-start' || type === 'assistant.started' || type === 'call.started') {
+      const call   = payload.call || payload;
+      const callId = call.id || payload.callId || ('call_' + Date.now());
+      const from   = call?.customer?.number || payload?.customer?.number || '';
 
-    } else if (type === "conversation-update" || type === "transcript") {
-      handleTranscript(payload);
+      activeCalls[callId] = {
+        id:          callId,
+        phone:       formatPhone(from),
+        name:        '',
+        started_at:  new Date().toISOString(),
+        transcript:  [],
+        call_type:   '',
+        lead_score:  'warm',
+        summary:     '',
+        duration:    0
+      };
 
-    } else if (type === "end-of-call-report" || type === "call-end") {
-      await handleEndOfCall(payload, res);
+      // Create row in Supabase immediately
+      await dbWrite('calls', {
+        id:         callId,
+        phone:      formatPhone(from),
+        started_at: activeCalls[callId].started_at,
+        status:     'in-progress'
+      }, 'on_conflict=id');
+
+      console.log(`[Call Start] ${callId} from ${from}`);
+
+    // ── TRANSCRIPT UPDATE ──
+    } else if (type === 'conversation-update' || type === 'transcript') {
+      const callId = payload?.call?.id || payload?.callId;
+      const call   = activeCalls[callId];
+      if (call) {
+        const messages = payload.conversation || payload.messages || [];
+        if (messages.length > 0) {
+          const last = messages[messages.length - 1];
+          if (last?.content) {
+            call.transcript.push({ role: last.role, content: last.content });
+          }
+        }
+        if (payload.transcript && payload.role) {
+          call.transcript.push({ role: payload.role, content: payload.transcript });
+        }
+      }
+
+    // ── FUNCTION CALL (collect caller info) ──
+    } else if (type === 'function-call') {
+      const callId = payload?.call?.id || payload?.callId;
+      const call   = activeCalls[callId];
+      const fnName = payload?.functionCall?.name;
+      const params = payload?.functionCall?.parameters || {};
+
+      if (call) {
+        if (fnName === 'collect_caller_info') {
+          if (params.name)    call.name     = params.name;
+          if (params.phone)   call.phone    = formatPhone(params.phone) || call.phone;
+          if (params.service) call.call_type = params.service;
+        }
+        if (fnName === 'escalate_to_human' || fnName === 'callAlbert') {
+          call.call_type  = 'warranty';
+          call.lead_score = 'urgent';
+        }
+      }
+
+      res.status(200).json({ result: JSON.stringify({ success: true }) });
       return;
 
-    } else if (type === "function-call") {
-      await handleFunctionCall(payload, res);
-      return;
+    // ── END OF CALL ──
+    } else if (type === 'end-of-call-report' || type === 'call-end') {
+      const callId   = payload?.call?.id || payload?.callId;
+      const call     = activeCalls[callId] || {};
+      const startedAt = payload?.call?.startedAt || call.started_at || new Date().toISOString();
+      const endedAt   = payload?.call?.endedAt   || new Date().toISOString();
+      const duration  = Math.round((new Date(endedAt) - new Date(startedAt)) / 1000);
+      const summary   = payload.summary || '';
 
-    } else if (type === "status-update" || type === "speech-update") {
-      handleStatusUpdate(payload);
+      // Parse transcript array from payload if available
+      let transcript = call.transcript || [];
+      if (payload.transcript && Array.isArray(payload.transcript)) {
+        transcript = payload.transcript.map(t => ({ role: t.role, content: t.content || t.text || '' }));
+      }
+
+      // Extract caller name from summary if not collected via function call
+      let name = call.name || '';
+      if (!name && summary) {
+        const m = summary.match(/(?:name is|caller is|customer is)\s+([A-Z][a-z]+(?: [A-Z][a-z]+)?)/i);
+        if (m) name = m[1];
+      }
+
+      // Detect call type from summary
+      let callType = call.call_type || '';
+      if (!callType && summary) {
+        const low = summary.toLowerCase();
+        if (low.includes('warranty') || low.includes('dead') || low.includes('dying')) callType = 'warranty';
+        else if (low.includes('root revive') || low.includes('fertiliz')) callType = 'root_revive';
+        else if (low.includes('tree care') || low.includes('pruning') || low.includes('quarterly')) callType = 'tree_care';
+        else if (low.includes('tree') || low.includes('buy') || low.includes('purchase') || low.includes('price')) callType = 'new_tree';
+      }
+
+      // Detect urgency
+      let leadScore = call.lead_score || 'warm';
+      if (callType === 'warranty') leadScore = 'urgent';
+      else if (summary && summary.toLowerCase().match(/ready to buy|wants to order|place an order|hot lead/)) leadScore = 'hot';
+
+      // Save completed call to Supabase
+      await dbPatch('calls', callId, {
+        name:       name,
+        phone:      call.phone || formatPhone(payload?.call?.customer?.number || ''),
+        ended_at:   endedAt,
+        duration:   duration,
+        status:     'completed',
+        summary:    summary,
+        transcript: transcript,
+        call_type:  callType,
+        lead_score: leadScore,
+        created_at: startedAt
+      });
+
+      console.log(`[End of Call] ${call.phone} | ${duration}s | type:${callType} | score:${leadScore}`);
+      delete activeCalls[callId];
+
+      res.status(200).json({ received: true });
+      return;
     }
+
   } catch(err) {
-    console.error("[Vapi Error] " + type + ": " + err.message);
+    console.error(`[Vapi Error] ${type}: ${err.message}`);
   }
 
   res.status(200).json({ received: true });
 });
 
-function handleCallStart(payload) {
-  var call   = payload.call || payload;
-  var callId = call.id || payload.callId || ("call_" + Date.now());
-  var from   = (call.customer && call.customer.number) || (payload.customer && payload.customer.number) || "Unknown";
-
-  if (store.calls.find(function(c) { return c.id === callId; })) return;
-
-  store.calls.push({
-    id: callId,
-    phone: formatPhone(from),
-    name: "Unknown",
-    startedAt: new Date().toISOString(),
-    endedAt: null,
-    status: "in-progress",
-    duration: null,
-    transcript: [],
-    summary: null,
-    smsReplied: false,
-    voicemail: null,
-    followUp: null,
-    service: null,
-    recordingUrl: null,
-    sentiment: null,
-    escalated: false,
-    escalationReason: null,
-  });
-  console.log("[Call Start] " + callId + " from " + from);
-}
-
-function handleTranscript(payload) {
-  var callId = (payload.call && payload.call.id) || payload.callId;
-  var call   = store.calls.find(function(c) { return c.id === callId; });
-  var messages = payload.conversation || payload.messages || [];
-
-  if (call && messages.length > 0) {
-    var last = messages[messages.length - 1];
-    if (last && last.content) {
-      call.transcript.push({ role: last.role, text: last.content, time: new Date().toISOString() });
-    }
-  }
-
-  if (payload.transcript && call) {
-    call.transcript.push({ role: payload.role || "user", text: payload.transcript, time: new Date().toISOString() });
-  }
-}
-
-async function handleEndOfCall(payload, res) {
-  var callId = (payload.call && payload.call.id) || payload.callId;
-  var call   = store.calls.find(function(c) { return c.id === callId; });
-
-  if (!call) {
-    var from = (payload.call && payload.call.customer && payload.call.customer.number) || "Unknown";
-    call = {
-      id: callId || ("call_" + Date.now()),
-      phone: formatPhone(from),
-      name: "Unknown",
-      startedAt: (payload.call && payload.call.startedAt) || new Date().toISOString(),
-      transcript: [],
-      smsReplied: false,
-      voicemail: null,
-      followUp: null,
-      service: null,
-      sentiment: null,
-      escalated: false,
-    };
-    store.calls.push(call);
-  }
-
-  var startedAt = (payload.call && payload.call.startedAt) || call.startedAt;
-  var endedAt   = (payload.call && payload.call.endedAt)   || new Date().toISOString();
-  var dur = startedAt ? Math.round((new Date(endedAt) - new Date(startedAt)) / 1000) : null;
-
-  call.status       = "completed";
-  call.endedAt      = endedAt;
-  call.duration     = dur;
-  call.summary      = payload.summary || null;
-  call.recordingUrl = payload.recordingUrl || (payload.call && payload.call.recordingUrl) || null;
-
-  if (payload.transcript) {
-    if (typeof payload.transcript === "string") {
-      call.voicemail = payload.transcript.slice(0, 600);
-    } else if (Array.isArray(payload.transcript)) {
-      var userLines = payload.transcript
-        .filter(function(t) { return t.role === "user"; })
-        .map(function(t) { return t.content || t.text || ""; })
-        .join(" ");
-      if (userLines) call.voicemail = userLines.slice(0, 600);
-    }
-  }
-
-  if (call.summary) {
-    var low = call.summary.toLowerCase();
-    if (low.match(/frustrated|upset|angry|unhappy|complaint/)) {
-      call.sentiment = "negative";
-    } else if (low.match(/happy|excited|great|wonderful|loved/)) {
-      call.sentiment = "positive";
-    } else {
-      call.sentiment = "neutral";
-    }
-  }
-
-  if (!call.smsReplied && call.phone !== "Unknown") {
-    var body = "Hi" + first(call.name) + "! Thanks for calling ATX Trees! Sorry we missed you. One of our team members will call you back shortly. In the meantime visit atxtrees.com to learn more about our Trees and Tree Care Program. - ATX Trees";
-    var r = await sendSMS(call.phone, body);
-    if (r.success) { call.smsReplied = true; logSMS(call.phone, body, "missed-call", r.sid); }
-  }
-
-  sendEmailNotification(call);
-  scoreLead(call);
-  console.log("[End of Call] " + call.phone + " | " + dur + "s | " + call.sentiment);
-  res.status(200).json({ received: true });
-}
-
-async function handleFunctionCall(payload, res) {
-  var callId = (payload.call && payload.call.id) || payload.callId;
-  var fnName = payload.functionCall && payload.functionCall.name;
-  var params = (payload.functionCall && payload.functionCall.parameters) || {};
-  var call   = store.calls.find(function(c) { return c.id === callId; });
-  var result = { success: true };
-
-  if (call) {
-    if (fnName === "collect_caller_info") {
-      if (params.name)    call.name    = params.name;
-      if (params.phone)   call.phone   = formatPhone(params.phone) || call.phone;
-      if (params.service) call.service = params.service;
-      if (params.email)   call.email   = params.email;
-
-    } else if (fnName === "schedule_callback") {
-      store.followUps.push({ id: Date.now(), callId: callId, name: call.name, phone: call.phone, date: params.date, time: params.time, service: call.service, notes: params.notes || "", createdAt: new Date().toISOString() });
-      call.followUp = params.time + " on " + params.date;
-      var cbBody = "Hi" + first(call.name) + "! Your callback with ATX Trees is confirmed for " + params.date + " at " + params.time + ". We will call " + call.phone + ". Questions? Reply here. (512) 749-5149";
-      var cbR = await sendSMS(call.phone, cbBody);
-      if (cbR.success) { call.smsReplied = true; logSMS(call.phone, cbBody, "callback", cbR.sid); }
-
-    } else if (fnName === "book_consultation") {
-      var con = { id: Date.now(), callId: callId, name: params.name || call.name, phone: params.phone || call.phone, email: params.email || "", services: params.services || (call.service ? [call.service] : []), budget: params.budget || "", date: params.date, time: params.time, address: params.address || "", notes: params.notes || "", status: "new", createdAt: new Date().toISOString() };
-      store.consultations.push(con);
-      var conBody = "Hi" + first(con.name) + "! Consultation confirmed!\nDate: " + con.date + " at " + con.time + "\nATX Trees (512) 749-5149";
-      var conR = await sendSMS(con.phone, conBody);
-      if (conR.success) { call.smsReplied = true; logSMS(con.phone, conBody, "consultation", conR.sid); }
-      await alertOwner("New consultation!\nName: " + con.name + "\nPhone: " + con.phone + "\nDate: " + con.date + " at " + con.time);
-
-    } else if (fnName === "send_sms_confirmation") {
-      var toNum  = params.phone || call.phone;
-      var smsTxt = params.message || ("Hi" + first(call.name) + "! Thanks for calling ATX Trees. We will be in touch shortly. (512) 749-5149");
-      var smsR   = await sendSMS(toNum, smsTxt);
-      if (smsR.success) { call.smsReplied = true; logSMS(toNum, smsTxt, "confirmation", smsR.sid); }
-      result = { success: smsR.success };
-
-    } else if (fnName === "escalate_to_human") {
-      call.escalated        = true;
-      call.escalationReason = params.reason || "Caller requested human";
-      await alertOwner("ESCALATION!\nCaller: " + call.name + "\nPhone: " + call.phone + "\nReason: " + call.escalationReason);
-    }
-  }
-
-  res.status(200).json({ result: JSON.stringify(result) });
-}
-
-function handleStatusUpdate(payload) {
-  var callId = (payload.call && payload.call.id) || payload.callId;
-  var call   = store.calls.find(function(c) { return c.id === callId; });
-  if (call && payload.status) call.status = payload.status;
-}
-
-
-// ============================================================
-//  DASHBOARD API
-// ============================================================
-app.get("/api/calls", function(_, res) {
-  res.json(store.calls.slice().sort(function(a,b) { return new Date(b.startedAt) - new Date(a.startedAt); }));
-});
-
-app.get("/api/calls/:id", function(req, res) {
-  var c = store.calls.find(function(c) { return c.id === req.params.id; });
-  c ? res.json(c) : res.status(404).json({ error: "Not found" });
-});
-
-app.get("/api/consultations", function(_, res) {
-  res.json(store.consultations.slice().sort(function(a,b) { return new Date(b.createdAt) - new Date(a.createdAt); }));
-});
-
-app.get("/api/followups", function(_, res) {
-  res.json(store.followUps.slice().sort(function(a,b) { return new Date(a.date) - new Date(b.date); }));
-});
-
-app.get("/api/smslog", function(_, res) {
-  res.json(store.smsLog.slice().sort(function(a,b) { return new Date(b.sentAt) - new Date(a.sentAt); }));
-});
-
-app.get("/api/stats", function(_, res) {
-  var today = new Date().toDateString();
-  res.json({
-    totalCalls:    store.calls.length,
-    todayCalls:    store.calls.filter(function(c) { return new Date(c.startedAt).toDateString() === today; }).length,
-    unreplied:     store.calls.filter(function(c) { return !c.smsReplied; }).length,
-    escalated:     store.calls.filter(function(c) { return c.escalated; }).length,
-    consultations: store.consultations.length,
-    followUps:     store.followUps.length,
-    smsSent:       store.smsLog.length,
-    sentiment: {
-      positive: store.calls.filter(function(c) { return c.sentiment === "positive"; }).length,
-      neutral:  store.calls.filter(function(c) { return c.sentiment === "neutral"; }).length,
-      negative: store.calls.filter(function(c) { return c.sentiment === "negative"; }).length,
-    },
-  });
-});
-
-app.post("/api/calls/:id/sms", async function(req, res) {
-  var call = store.calls.find(function(c) { return c.id === req.params.id; });
-  if (!call) return res.status(404).json({ error: "Not found" });
-  var body = req.body.message || ("Hi" + first(call.name) + "! Following up from ATX Trees. Call us at (512) 749-5149 or reply here!");
-  var r = await sendSMS(call.phone, body);
-  if (r.success) { call.smsReplied = true; logSMS(call.phone, body, "manual", r.sid); }
-  res.json(r);
-});
-
-app.post("/api/consultations/:id/review", function(req, res) {
-  var c = store.consultations.find(function(x) { return x.id === Number(req.params.id); });
-  if (!c) return res.status(404).json({ error: "Not found" });
-  c.status = "reviewed";
-  res.json({ ok: true });
-});
-
-
-// EMAIL NOTIFICATIONS
-const SENDGRID_KEY = process.env.SENDGRID_KEY || '';
-const ALBERT_EMAIL = "albert@atxtrees.com";
-async function sendEmailNotification(call) {
-  if (!SENDGRID_KEY) { console.log('[Email] No SendGrid key configured'); return; }
-  try {
-    var urgent = (call.urgent||call.escalated)?'URGENT - ':'';
-    var subject = urgent+'ATX Trees Call: '+(call.name||'Unknown')+' - '+(call.phone||'');
-    var rows=[['Name',call.name||'Unknown'],['Phone',call.phone||'N/A'],['Email',call.email||'N/A'],['Service',call.service||'Not specified'],['Duration',(call.duration||0)+'s'],['Sentiment',call.sentiment||'neutral']];
-    var trs=rows.map(function(r){return '<tr><td style="padding:7px 0;color:#666;width:120px">'+r[0]+'</td><td style="padding:7px 0">'+r[1]+'</td></tr>';}).join('');
-    var html='<div style="font-family:sans-serif;max-width:580px;margin:0 auto;padding:20px"><h2 style="color:#1a5010;border-bottom:2px solid #4a8020;padding-bottom:10px">ATX Trees - New Call</h2>'+(call.urgent||call.escalated?'<div style="background:#3a0808;border:2px solid #e05030;border-radius:8px;padding:12px;margin-bottom:16px;color:#e08060;font-weight:bold">URGENT - Call back immediately!</div>':'')+'<table style="width:100%;border-collapse:collapse">'+trs+'</table>'+(call.summary?'<div style="background:#f5f5f5;border-radius:8px;padding:14px;margin-top:12px"><strong>Summary:</strong><br>'+call.summary+'</div>':'')+'<div style="margin-top:20px;text-align:center"><a href="https://atx-trees-dashboard.onrender.com" style="background:#1a5010;color:#fff;padding:12px 28px;border-radius:8px;text-decoration:none;font-weight:600">View Dashboard</a></div></div>';
-    var p=JSON.stringify({personalizations:[{to:[{email:ALBERT_EMAIL}]}],from:{email:'albert@atxtrees.com',name:'Terra - ATX Trees'},subject:subject,content:[{type:'text/html',value:html}]});
-    var https=require('https');
-    var er=https.request({hostname:'api.sendgrid.com',port:443,path:'/v3/mail/send',method:'POST',headers:{'Authorization':'Bearer '+SENDGRID_KEY,'Content-Type':'application/json','Content-Length':Buffer.byteLength(p)}},function(r){console.log('[Email] '+r.statusCode);});
-    er.on('error',function(e){console.error('[Email]',e.message);});er.write(p);er.end();
-  }catch(e){console.error('[Email]',e.message);}
-}
-
-
-// ─── LEAD SCORER (Claude AI) ───
-async function scoreLead(call) {
-  try {
-    if (!call.transcript || call.transcript.length === 0) return;
-    
-    var transcriptText = call.transcript.map(function(m) {
-      var role = (m.role === 'assistant' || m.role === 'bot') ? 'Terra' : 'Customer';
-      return role + ': ' + m.content;
-    }).join('\n');
-
-    var prompt = 'You are analyzing a call transcript for ATX Trees, a tree nursery and care company in Dripping Springs, TX. Score this lead based on buying intent.\n\nTranscript:\n' + transcriptText + '\n\nRespond with ONLY a JSON object like this:\n{"score": "hot", "reason": "Customer asked about pricing and delivery timeline", "callType": "new_trees"}\n\nScore must be one of: hot, warm, cold\n- hot: ready to buy, asking about price/delivery/scheduling, urgent warranty issue\n- warm: interested but researching, wants callback, asked about TCP program\n- cold: just browsing, wrong number, no clear intent\n\ncallType must be one of: new_trees, tree_care, warranty, other';
-
-    var response = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': process.env.ANTHROPIC_API_KEY || '',
-        'anthropic-version': '2023-06-01'
-      },
-      body: JSON.stringify({
-        model: 'claude-haiku-4-5',
-        max_tokens: 200,
-        messages: [{ role: 'user', content: prompt }]
-      })
-    });
-
-    var data = await response.json();
-    var text = data.content && data.content[0] && data.content[0].text;
-    if (!text) return;
-
-    var result = JSON.parse(text.trim());
-    call.leadScore = result.score;
-    call.callType = result.callType;
-    
-    console.log('[Lead Score] ' + call.name + ': ' + result.score + ' - ' + result.reason);
-
-    // If HOT lead — send immediate SMS to Albert
-    if (result.score === 'hot') {
-      var alertMsg = '🔥 HOT LEAD - ' + (call.name || 'Unknown') + ' (' + (call.phone || '') + ') is ready to buy! Call back NOW. Reason: ' + result.reason;
-      await sendSMS(process.env.OWNER_PHONE || '+15127495149', alertMsg);
-      console.log('[Hot Lead Alert] Sent to Albert!');
-    }
-
-    // Update in Supabase
-    await updateDB('calls', call.id, { 
-      call_type: result.callType,
-      lead_score: result.score 
-    });
-
-  } catch(e) {
-    console.error('[Lead Scorer Error]', e.message);
-  }
-}
-
-app.get("/health", function(_, res) {
-  res.json({
-    status: "ok",
-    uptime: Math.round(process.uptime()),
-    calls: store.calls.length,
-    twilio: process.env.TWILIO_ACCOUNT_SID ? "connected" : "not configured",
-    ownerAlerts: OWNER_PHONE || "not set",
-    smsSent: store.smsLog.length,
-  });
-});
-
-
-// ─── BOOKINGS API ───
-app.get('/api/bookings', async function(req, res) {
-  try {
-    var result = await dbQuery('GET', 'bookings', null, 'order=created_at.desc&limit=500');
-    res.json(result || []);
-  } catch(e) {
-    console.error('GET bookings error:', e.message);
-    res.json([]);
-  }
-});
-
-app.post('/api/bookings', async function(req, res) {
-  try {
-    var b = req.body;
-    console.log('[Booking] Saving:', b.name, b.date);
-    var result = await dbQuery('POST', 'bookings', {
-      name: b.name || '',
-      phone: b.phone || '',
-      email: b.email || '',
-      address: b.address || '',
-      date: b.date || '',
-      time: b.time || '',
-      type: b.type || '',
-      service: b.service || '',
-      notes: b.notes || ''
-    }, null);
-    console.log('[Booking] DB result:', JSON.stringify(result));
-    if(result && result.code) {
-      console.error('[Booking] Supabase error:', result.message, result.hint);
-      return res.status(500).json({error: result.message});
-    }
-    res.json(result || [{success: true}]);
-  } catch(e) {
-    console.error('[Booking] Error:', e.message);
-    res.status(500).json({error: e.message});
-  }
-});
-
-app.delete('/api/bookings/:id', async function(req, res) {
-  try {
-    await dbQuery('DELETE', 'bookings', null, 'id=eq.'+req.params.id);
-    res.json({success: true});
-  } catch(e) {
-    res.status(500).json({error: e.message});
-  }
-});
-
-
-
-// ─── RING ALBERT FIRST, THEN TERRA ───
+// ── TWILIO RING-ALBERT-FIRST ──
 app.post('/twilio/ring-first', function(req, res) {
   res.type('text/xml');
   res.send(`<?xml version="1.0" encoding="UTF-8"?>
@@ -555,38 +264,29 @@ app.post('/twilio/ring-first', function(req, res) {
 </Response>`);
 });
 
-// ─── IF ALBERT DOESN'T ANSWER, SEND TO TERRA ───
 app.post('/twilio/no-answer', function(req, res) {
-  var dialStatus = req.body.DialCallStatus;
-  console.log('Dial status:', dialStatus);
-  console.log('Body:', JSON.stringify(req.body));
-  // Always send to Terra unless Albert answered
-  if (dialStatus === 'completed') {
-    // Albert answered and call ended normally
-    res.type('text/xml');
+  const status = req.body.DialCallStatus;
+  res.type('text/xml');
+  if (status === 'completed') {
     res.send('<?xml version="1.0" encoding="UTF-8"?><Response><Hangup/></Response>');
   } else {
-    // No answer, busy, failed - send to Terra via Dial
-    res.type('text/xml');
-    res.send('<?xml version="1.0" encoding="UTF-8"?><Response><Dial><Sip>sip:' + (req.body.To || '').replace('+','') + '@sip.vapi.ai</Sip></Dial></Response>');
+    res.send(`<?xml version="1.0" encoding="UTF-8"?><Response><Dial><Sip>sip:${(req.body.To||'').replace('+','')}@sip.vapi.ai</Sip></Dial></Response>`);
   }
 });
 
-// Try Supabase with retries
-async function loadWithRetry(attempt) {
-  attempt = attempt || 1;
-  console.log('Supabase connection attempt', attempt);
-  await loadAllData();
-  if (liveCalls.length === 0 && attempt < 5) {
-    console.log('Retrying in 10 seconds...');
-    setTimeout(function() { loadWithRetry(attempt + 1); }, 10000);
-  }
-}
+// ── READ CALLS (for dashboard / Grok) ──
+app.get('/calls', async function(req, res) {
+  const days = parseInt(req.query.days) || 14;
+  const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+  const data = await dbGet('calls', `order=created_at.desc&limit=500&created_at=gte.${since}`);
+  res.json({ calls: data || [] });
+});
 
-loadWithRetry(1);
-// Also start server immediately without waiting
-loadAllData().then(() => {
+// ── HEALTH ──
+app.get('/health', function(req, res) {
+  res.json({ status: 'ok', uptime: Math.round(process.uptime()), activeCalls: Object.keys(activeCalls).length });
+});
+
 app.listen(PORT, function() {
-  console.log("ATX Trees Webhook running on port " + PORT);
-});
+  console.log(`ATX Trees Webhook running on port ${PORT}`);
 });
