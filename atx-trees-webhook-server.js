@@ -124,7 +124,10 @@ function dbPatch(table, id, data) {
     const req = https.request(options, (res) => {
       let d = '';
       res.on('data', c => d += c);
-      res.on('end', () => resolve(res.statusCode));
+      res.on('end', () => {
+        console.log(`[DB Patch] ${table} id=${id} → ${res.statusCode} body=${d.slice(0,200)}`);
+        resolve(res.statusCode);
+      });
     });
     req.on('error', (e) => { console.error('[DB Patch Error]', e.message); resolve(null); });
     req.write(body);
