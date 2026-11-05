@@ -256,31 +256,36 @@ app.post("/vapi/webhook", async function(req, res) {
       const startedAt = payload?.call?.startedAt || call.started_at || new Date().toISOString();
       const endedAt   = payload?.call?.endedAt   || new Date().toISOString();
       const duration  = Math.round((new Date(endedAt) - new Date(startedAt)) / 1000);
-      const summary   = payload.summary || '';
+      // Vapi puts summary in analysis.summary or artifact.summary
+      const summary = payload.summary || payload.analysis?.summary || payload.artifact?.summary || '';
 
-      // Parse transcript — Vapi sends it in multiple possible formats
+      // Vapi puts transcript in artifact.messages
       let transcript = call.transcript || [];
-      if (payload.transcript && Array.isArray(payload.transcript)) {
+      if (payload.artifact?.messages && Array.isArray(payload.artifact.messages)) {
+        transcript = payload.artifact.messages
+          .filter(m => m.role !== 'system' && (m.message || m.content))
+          .map(m => ({ role: m.role, content: m.message || m.content || '' }));
+      } else if (payload.transcript && Array.isArray(payload.transcript)) {
         transcript = payload.transcript.map(t => ({ role: t.role, content: t.content || t.text || '' }));
       } else if (payload.messages && Array.isArray(payload.messages)) {
-        transcript = payload.messages.map(t => ({ role: t.role, content: t.content || t.text || '' }));
-      } else if (payload.call?.transcript && Array.isArray(payload.call.transcript)) {
-        transcript = payload.call.transcript.map(t => ({ role: t.role, content: t.content || t.text || '' }));
+        transcript = payload.messages.filter(m => m.role !== 'system').map(t => ({ role: t.role, content: t.content || t.message || '' }));
       }
       // Log what we got for debugging
       console.log(`[Transcript] ${transcript.length} lines from end-of-call`);
 
-      // Extract caller name from summary if not collected via function call
+      // Extract caller name from summary or transcript
       let name = call.name || '';
-      if (!name && summary) {
-        const m = summary.match(/(?:name is|caller is|customer is)\s+([A-Z][a-z]+(?: [A-Z][a-z]+)?)/i);
+      if (!name) {
+        const searchText = summary + ' ' + transcript.map(t => t.content).join(' ');
+        const m = searchText.match(/(?:my name is|i'm|i am|this is)\s+([A-Z][a-z]+(?: [A-Z][a-z]+)?)/i);
         if (m) name = m[1];
       }
 
-      // Detect call type from summary
+      // Detect call type from summary + transcript text
       let callType = call.call_type || '';
-      if (!callType && summary) {
-        const low = summary.toLowerCase();
+      const fullText = (summary + ' ' + transcript.map(t => t.content).join(' ')).toLowerCase();
+      if (!callType) {
+        const low = fullText;
         if (low.includes('warranty') || low.includes('dead') || low.includes('dying')) callType = 'warranty';
         else if (low.includes('root revive') || low.includes('fertiliz')) callType = 'root_revive';
         else if (low.includes('tree care') || low.includes('pruning') || low.includes('quarterly')) callType = 'tree_care';
@@ -290,7 +295,7 @@ app.post("/vapi/webhook", async function(req, res) {
       // Detect urgency
       let leadScore = call.lead_score || 'warm';
       if (callType === 'warranty') leadScore = 'urgent';
-      else if (summary && summary.toLowerCase().match(/ready to buy|wants to order|place an order|hot lead/)) leadScore = 'hot';
+      else if (fullText.match(/ready to buy|wants to order|place an order|hot lead|interested in purchasing/)) leadScore = 'hot';
 
       // Save completed call to Supabase
       await dbPatch('calls', callId, {
