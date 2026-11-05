@@ -251,11 +251,13 @@ app.post("/vapi/webhook", async function(req, res) {
     } else if (type === 'end-of-call-report' || type === 'call-end') {
       // Log the full payload so we can see exactly what Vapi sends
       console.log('[EOC RAW]', JSON.stringify(payload).slice(0, 2000));
-      const callId   = payload?.call?.id || payload?.callId;
+      const callId   = payload?.call?.id || payload?.callId || payload?.id;
       const call     = activeCalls[callId] || {};
-      const startedAt = payload?.call?.startedAt || call.started_at || new Date().toISOString();
-      const endedAt   = payload?.call?.endedAt   || new Date().toISOString();
-      const duration  = Math.round((new Date(endedAt) - new Date(startedAt)) / 1000);
+      const startedAt = payload?.call?.startedAt || payload?.startedAt || call.started_at || new Date().toISOString();
+      const endedAt   = payload?.call?.endedAt   || payload?.endedAt   || new Date().toISOString();
+      const duration  = payload?.call?.duration  || payload?.duration  || Math.round((new Date(endedAt) - new Date(startedAt)) / 1000);
+      const rawPhone  = payload?.call?.customer?.number || payload?.customer?.number || call.phone || '';
+      const phone     = call.phone || formatPhone(rawPhone);
       // Vapi puts summary in analysis.summary or artifact.summary
       const summary = payload.summary || payload.analysis?.summary || payload.artifact?.summary || '';
 
@@ -300,7 +302,7 @@ app.post("/vapi/webhook", async function(req, res) {
       // Save completed call to Supabase
       await dbPatch('calls', callId, {
         name:       name,
-        phone:      call.phone || formatPhone(payload?.call?.customer?.number || ''),
+        phone:      phone,
         ended_at:   endedAt,
         duration:   duration,
         status:     'completed',
@@ -311,12 +313,12 @@ app.post("/vapi/webhook", async function(req, res) {
         created_at: startedAt
       });
 
-      console.log(`[End of Call] ${call.phone} | ${duration}s | type:${callType} | score:${leadScore}`);
+      console.log(`[End of Call] ${phone} | ${duration}s | type:${callType} | score:${leadScore}`);
 
       // ── EMAIL GROK ──
       emailGrok({
         name:       name,
-        phone:      call.phone || formatPhone(payload?.call?.customer?.number || ''),
+        phone:      phone,
         call_type:  callType,
         lead_score: leadScore,
         summary:    summary,
