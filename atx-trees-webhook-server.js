@@ -343,6 +343,32 @@ app.post('/twilio/no-answer', function(req, res) {
   }
 });
 
+// ── INBOUND TEXT WEBHOOK (iPhone Shortcuts → Dashboard) ──
+app.post('/inbound-text', async function(req, res) {
+  const { from, name, body, type } = req.body;
+  if (!from && !body) return res.status(400).json({ error: 'Missing fields' });
+
+  const entry = {
+    phone:      from || '',
+    name:       name || '',
+    message:    body || '',
+    type:       type || 'text',   // 'text' | 'missed_call'
+    received_at: new Date().toISOString()
+  };
+
+  await dbWrite('inbound_texts', entry, '');
+  console.log(`[Inbound Text] from ${entry.phone}: ${entry.message.slice(0,60)}`);
+  res.json({ ok: true });
+});
+
+// ── READ INBOUND TEXTS (for dashboard) ──
+app.get('/inbound-texts', async function(req, res) {
+  const days = parseInt(req.query.days) || 7;
+  const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+  const data = await dbGet('inbound_texts', `order=received_at.desc&limit=200&received_at=gte.${since}`);
+  res.json({ texts: data || [] });
+});
+
 // ── READ CALLS (for dashboard / Grok) ──
 app.get('/calls', async function(req, res) {
   const days = parseInt(req.query.days) || 14;
