@@ -251,6 +251,8 @@ app.post("/vapi/webhook", async function(req, res) {
     } else if (type === 'end-of-call-report' || type === 'call-end') {
       // Log the full payload so we can see exactly what Vapi sends
       console.log('[EOC RAW]', JSON.stringify(payload).slice(0, 2000));
+      const eocCallId = payload?.call?.id || payload?.callId || payload?.id;
+      console.log('[EOC ID]', eocCallId, '| active keys:', Object.keys(activeCalls));
       const callId   = payload?.call?.id || payload?.callId || payload?.id;
       const call     = activeCalls[callId] || {};
       const startedAt = payload?.call?.startedAt || payload?.startedAt || call.started_at || new Date().toISOString();
