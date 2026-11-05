@@ -211,15 +211,17 @@ app.post("/vapi/webhook", async function(req, res) {
       const callId = payload?.call?.id || payload?.callId;
       const call   = activeCalls[callId];
       if (call) {
+        // Vapi sends full conversation array each time — replace, don't append
         const messages = payload.conversation || payload.messages || [];
         if (messages.length > 0) {
-          const last = messages[messages.length - 1];
-          if (last?.content) {
-            call.transcript.push({ role: last.role, content: last.content });
-          }
+          call.transcript = messages
+            .filter(m => m.content || m.text)
+            .map(m => ({ role: m.role, content: m.content || m.text || '' }));
         }
+        // Single transcript line
         if (payload.transcript && payload.role) {
-          call.transcript.push({ role: payload.role, content: payload.transcript });
+          const exists = call.transcript.find(t => t.content === payload.transcript);
+          if (!exists) call.transcript.push({ role: payload.role, content: payload.transcript });
         }
       }
 
@@ -254,11 +256,17 @@ app.post("/vapi/webhook", async function(req, res) {
       const duration  = Math.round((new Date(endedAt) - new Date(startedAt)) / 1000);
       const summary   = payload.summary || '';
 
-      // Parse transcript array from payload if available
+      // Parse transcript — Vapi sends it in multiple possible formats
       let transcript = call.transcript || [];
       if (payload.transcript && Array.isArray(payload.transcript)) {
         transcript = payload.transcript.map(t => ({ role: t.role, content: t.content || t.text || '' }));
+      } else if (payload.messages && Array.isArray(payload.messages)) {
+        transcript = payload.messages.map(t => ({ role: t.role, content: t.content || t.text || '' }));
+      } else if (payload.call?.transcript && Array.isArray(payload.call.transcript)) {
+        transcript = payload.call.transcript.map(t => ({ role: t.role, content: t.content || t.text || '' }));
       }
+      // Log what we got for debugging
+      console.log(`[Transcript] ${transcript.length} lines from end-of-call`);
 
       // Extract caller name from summary if not collected via function call
       let name = call.name || '';
